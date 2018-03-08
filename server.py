@@ -22,58 +22,39 @@ class Server(BaseHTTPRequestHandler):
 
         self._set_headers()
 
-        if 'learnCommand' in self.path:
-            commandName = self.path.split('/')[2] 
-            result = learnCommand(commandName)
-            if result == False:
-                self.wfile.write("Failed: No command learned")
-            else:
-                self.wfile.write("Learned: %s" % commandName)
+        if len(self.path.split('/')) < 2:
+            self.wfile.write("Failed")
+            return True
 
-        
-        elif 'sendCommand' in self.path:
-            commandName = self.path.split('/')[2]
-            if 'on' in commandName or 'off' in commandName:
-                status = commandName.rsplit('o', 1)[1]
-                realcommandName = commandName.rsplit('o', 1)[0]
-                print(status,realcommandName)
-                if 'n' in status:
-                    setStatus(realcommandName, '1', True)
-                elif 'ff' in status:
-                    setStatus(realcommandName, '0', True)
-            result = sendCommand(commandName)
-            if result == False:
-                self.wfile.write("Failed: Unknonwn command")
-            else:
-                self.wfile.write("Sent: %s" % commandName)
-                
+        deviceName = self.path.split('/')[1]
 
+        if not settingsFile.has_section(deviceName):
+            self.wfile.write("Failed: Device '%s' is not exists in settings.ini" % deviceName)
+            return True
 
+        devIPAddress = settingsFile.get(deviceName, 'IPAddress')
+        devPort = settingsFile.get(deviceName, 'Port')
+        devMACAddress = settingsFile.get(deviceName, 'MACAddress')
 
-        elif 'getStatus' in self.path:
-            commandName = self.path.split('/')[2]
-            if 'temp' in commandName:
-                result = getTempRM()
-                if result == False:
-                    self.wfile.write("Failed: Cannot get temperature")
-                else:
-                    self.wfile.write('''{ "temperature": %s } ''' % result)
-            else:
-                status = getStatus(commandName)
-                if (status):
-                    self.wfile.write(status)
-                else:
-                    self.wfile.write("Failed: Unknown command")
-        
-        elif 'setStatus' in self.path:
-            commandName = self.path.split('/')[2]
-            status = self.path.split('/')[3]
-            result = setStatus(commandName, status)
-            print('Setting status %s of %s' % (commandName,status))
-            if (result):
-                self.wfile.write("Set status of %s to %s" % (commandName, status))
-            else:
-                self.wfile.write("Failed: Unknown command")
+        if devIPAddress.strip() == '':
+            self.wfile.write("Device IP address must exist in settings.ini")
+            return True
+
+        if devPort.strip() == '':
+            self.wfile.write("Device Port must exist in settings.ini")
+            return True
+        devPort = int(devPort.strip())
+
+        if devMACAddress.strip() == '':
+            self.wfile.write("Device MAC address must exist in settings.ini")
+            return True
+        devMACAddress = netaddr.EUI(devMACAddress)
+
+        if deviceName.find('RM') == 0:
+            return self.get_RMDevice(deviceName, devIPAddress, devPort, devMACAddress)
+
+        if deviceName.find('SP2') == 0:
+            return self.get_SP2Device(deviceName, devIPAddress, devPort, devMACAddress)
 
         elif 'a1'  in self.path:
             sensor = self.path.split('/')[2]
@@ -88,11 +69,110 @@ class Server(BaseHTTPRequestHandler):
         else:
             self.wfile.write("Failed")
 
+    def get_RMDevice(self, deviceName, rmIPAddress, rmPort, rmMACAddress):
+        if len(self.path.split('/')) < 4:
+            self.wfile.write("Failed")
+            return True
+        actionName = self.path.split('/')[2]
+        commandName = self.path.split('/')[3]
+
+        if 'learnCommand' in actionName:
+            result = learnCommand(rmIPAddress, rmPort, rmMACAddress, commandName)
+            if result == False:
+                self.wfile.write("Failed: No command learned")
+            else:
+                self.wfile.write("Learned: %s" % commandName)
+
+        elif 'sendCommand' in actionName:
+            if 'on' in commandName or 'off' in commandName:
+                status = commandName.rsplit('o', 1)[1]
+                realcommandName = commandName.rsplit('o', 1)[0]
+                print(status, realcommandName)
+                if 'n' in status:
+                    setStatus(realcommandName, '1', True)
+                elif 'ff' in status:
+                    setStatus(realcommandName, '0', True)
+            result = sendCommand(rmIPAddress, rmPort, rmMACAddress, commandName)
+            if result == False:
+                self.wfile.write("Failed: Unknonwn command")
+            else:
+                self.wfile.write("Sent: %s" % commandName)
+
+        elif 'getStatus' in actionName:
+            if 'temp' in commandName:
+                result = getTempRM(rmIPAddress, rmPort, rmMACAddress)
+                if result == False:
+                    self.wfile.write("Failed: Cannot get temperature")
+                else:
+                    self.wfile.write('''{ "temperature": %s } ''' % result)
+            else:
+                status = getStatus(commandName)
+                if (status):
+                    self.wfile.write(status)
+                else:
+                    self.wfile.write("Failed: Unknown command")
+
+        elif 'setStatus' in self.path:
+            commandName = self.path.split('/')[2]
+            status = self.path.split('/')[3]
+            result = setStatus(commandName, status)
+            print('Setting status %s of %s' % (commandName, status))
+            if (result):
+                self.wfile.write("Set status of %s to %s" % (commandName, status))
+            else:
+                self.wfile.write("Failed: Unknown command")
+
+        else:
+            self.wfile.write("Failed: Unknown action")
+
+    def get_SP2Device(self, deviceName, devIPAddress, devPort, devMACAddress):
+        if len(self.path.split('/')) < 3:
+            self.wfile.write("Failed")
+            return True
+        commandName = self.path.split('/')[2]
+
+        device = broadlink.sp2((devIPAddress, devPort), devMACAddress)
+        try:
+            device.auth()
+        except Exception, msg:
+            self.wfile.write("Failed: Connect to device timed out")
+            return True
+
+        try:
+            if 'setPowerOn' in commandName:
+                device.set_power(True)
+                self.wfile.write("Success")
+
+            elif 'setPowerOff' in commandName:
+                device.set_power(False)
+                self.wfile.write("Success")
+
+            elif 'checkPower' in commandName:
+                state = device.check_power()
+                self.wfile.write('''{ "%s": "%s" }''' % ("state", state))
+
+            elif 'getEnergy' in commandName:
+                energy = device.get_energy()
+                self.wfile.write('''{ "%s": "%s" }''' % ("energy", energy))
+
+            else:
+                self.wfile.write("Failed: Unknown command")
+            return True
+
+        except Exception, msg:
+            self.wfile.write("Failed: Send command to device failed")
+            return True
+
+
 serverPort = ''
 
-def sendCommand(commandName):
-    device = broadlink.rm((RMIPAddress, RMPort), RMMACAddress)
-    device.auth()
+def sendCommand(rmIPAddress, rmPort, rmMACAddress, commandName):
+    device = broadlink.rm((rmIPAddress, rmPort), rmMACAddress)
+    try:
+        device.auth()
+    except Exception, msg:
+        print "Connect to device timed out.."
+        return False
 
     deviceKey = device.key
     deviceIV = device.iv
@@ -110,24 +190,32 @@ def sendCommand(commandName):
         
         finalCommand = encodedCommand[0x04:]    
         
-        signal.signal(signal.SIGALRM, signal_handler)
-        signal.alarm(4)   # Ten seconds
+        #signal.signal(signal.SIGALRM, signal_handler)
+        #signal.alarm(4)   # Ten seconds
         try:
             device.send_data(finalCommand)
         except Exception, msg:
             print "Probably timed out.."
             return True
 
-def learnCommand(commandName):
-    device = broadlink.rm((RMIPAddress, RMPort), RMMACAddress)
-    device.auth()
+def learnCommand(rmIPAddress, rmPort, rmMACAddress, commandName):
+    device = broadlink.rm((rmIPAddress, rmPort), rmMACAddress)
+    try:
+        device.auth()
+    except Exception, msg:
+        print "Connect to device failed"
+        return False
 
     deviceKey = device.key
     deviceIV = device.iv
 
-    device.enter_learning()
-    time.sleep(RealTimeout)
-    LearnedCommand = device.check_data()
+    try:
+        device.enter_learning()
+        time.sleep(RealTimeout)
+        LearnedCommand = device.check_data()
+    except Exception, msg:
+        print "Learn command failed"
+        return False
 
     if LearnedCommand is None:
         print('Command not received')
@@ -173,8 +261,8 @@ def getStatus(commandName):
     else:
         return False
 
-def getTempRM():
-    device = broadlink.rm((RMIPAddress, RMPort), RMMACAddress)
+def getTempRM(rmIPAddress, rmPort, rmMACAddress):
+    device = broadlink.rm((rmIPAddress, rmPort), rmMACAddress)
     device.auth()
     temperature = device.check_temperature()
     if temperature:
@@ -193,37 +281,15 @@ def signal_handler(signum, frame):
     print ("HTTP timeout, but the command should be already sent.")
         
 def start(server_class=HTTPServer, handler_class=Server, port=serverPort):
-
-
     server_address = ('', port)
     httpd = server_class(server_address, handler_class)
     print 'Starting broadlink-rest server on port %s ...' % port
     httpd.serve_forever()
 
 if __name__ == "__main__":
-
     settingsFile = configparser.ConfigParser()
     settingsFile.optionxform = str
     settingsFile.read(settings.settingsINI)
-
-    RMIPAddress = settings.RMIPAddress
-    if RMIPAddress.strip() == '':
-        print('IP address must exist in settings.ini or it should be entered as a command line parameter')
-        sys.exit(2)
-
-    RMPort = settings.RMPort
-    if RMPort.strip() == '':
-        print('Port must exist in settings.ini or it should be entered as a command line parameter')
-        sys.exit(2)
-    else:
-        RMPort = int(RMPort.strip())
-
-    RMMACAddress = settings.RMMACAddress
-    if RMMACAddress.strip() == '':
-        print('MAC address must exist in settings.ini or it should be entered as a command line parameter')
-        sys.exit(2)
-    else:
-        RMMACAddress = netaddr.EUI(RMMACAddress)
 
     A1IPAddress = settings.A1IPAddress
     if A1IPAddress.strip() == '':
@@ -256,6 +322,5 @@ if __name__ == "__main__":
         serverPort = int(settingsFile.get('General', 'serverPort'))
     else:
         serverPort = 8080
-
 
     start(port=serverPort)

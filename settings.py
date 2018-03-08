@@ -9,9 +9,6 @@ settings.read(settingsINI)
 
 Timeout = settings.get('General', 'Timeout')
 
-RMIPAddress = settings.get('BroadlinkRM', 'IPAddress')
-RMPort = settings.get('BroadlinkRM', 'Port')
-RMMACAddress = settings.get('BroadlinkRM', 'MACAddress')
 
 A1IPAddress = settings.get('BroadlinkA1', 'IPAddress')
 A1Port = settings.get('BroadlinkA1', 'Port')
